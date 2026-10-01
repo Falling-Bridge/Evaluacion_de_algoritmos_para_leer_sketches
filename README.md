@@ -415,4 +415,4 @@ CountSketch puede aplicar directamente su estimador habitual a la diferencia ent
 
 En CMS, el estimador habitual utiliza el mínimo entre las filas y depende de que las frecuencias sean no negativas. Al calcular diferencias entre subventanas, los valores pueden ser negativos, por lo que el mínimo deja de ser un estimador adecuado. Por ello se utiliza una mediana de las filas (`CMS-mediana`) para estimar la diferencia.
 
-Sin embargo, esta modificación no conserva las garantías estándar de Count-Min Sketch, ya que dichas garantías dependen de las propiedades del estimador basado en el mínimo y de la no negatividad de las frecuencias.<img width="1680" height="1120" alt="delta_ddos" src="https://github.com/user-attachments/assets/48b01a09-95ff-4753-89ad-85fd3bab4104" />
+Sin embargo, esta modificación no conserva las garantías estándar de Count-Min Sketch, ya que dichas garantías dependen de las propiedades del estimador basado en el mínimo y de la no negatividad de las frecuencias.
