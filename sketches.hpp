@@ -74,11 +74,7 @@ static inline int hash_sign(UKey k, uint32_t r) {
                ^ splitmix64(hi ^ 0x9FB21C651E98DF25ull ^ (uint64_t)r);
     return (h & 1ull) ? +1 : -1;
 }
-
-// ============================================================================
-// Count-Min Sketch  (CMS)
-// ============================================================================
-//
+// Count-Min Sketch (CMS)
 // Matriz d x w de contadores sin signo. Actualizacion:
 //     C[j][h_j(k)] += c        para j = 1..d
 // Estimacion:
@@ -127,11 +123,16 @@ public:
 
     void clear() { std::fill(C_.begin(), C_.end(), 0); }
 
-    // Linealidad: this <- this + sign*other. Con sign=-1 se "resta" una
-    // subventana del agregado (A <- A - S_expira).
+    // FIX #8: evitar el cast (int64_t)other.C_[i] que es implementation-defined
+    // si el contador supera 2^63. Se separa el caso sign>0 y sign<0.
     void add(const CountMinSketch &other, int sign) {
-        for (size_t i = 0; i < C_.size(); ++i)
-            C_[i] += (uint64_t)(sign * (int64_t)other.C_[i]);
+        if (sign > 0) {
+            for (size_t i = 0; i < C_.size(); ++i)
+                C_[i] += other.C_[i];
+        } else {
+            for (size_t i = 0; i < C_.size(); ++i)
+                C_[i] -= other.C_[i];
+        }
     }
 
     uint32_t d() const { return d_; }
@@ -142,11 +143,8 @@ private:
     uint32_t d_, w_;
     std::vector<uint64_t> C_;
 };
-
-// ============================================================================
 // CountSketch  (CS)
-// ============================================================================
-//
+
 // Igual estructura que CMS, pero cada fila tiene tambien un hash de signo:
 //     C[j][h_j(k)] += s_j(k) * c
 // Estimacion (deshaciendo el signo, luego mediana):
@@ -188,8 +186,13 @@ public:
     void clear() { std::fill(C_.begin(), C_.end(), 0); }
 
     void add(const CountSketch &other, int sign) {
-        for (size_t i = 0; i < C_.size(); ++i)
-            C_[i] += sign * other.C_[i];
+        if (sign > 0) {
+            for (size_t i = 0; i < C_.size(); ++i)
+                C_[i] += other.C_[i];
+        } else {
+            for (size_t i = 0; i < C_.size(); ++i)
+                C_[i] -= other.C_[i];
+        }
     }
 
     uint32_t d() const { return d_; }

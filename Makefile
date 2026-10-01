@@ -14,6 +14,7 @@ BINS = pcap2bin exact_hh tarea1
 .PHONY: all run run-plots clean help
 
 all: $(BINS)
+	mkdir -p out results figures
 
 pcap2bin: pcap2bin.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $<

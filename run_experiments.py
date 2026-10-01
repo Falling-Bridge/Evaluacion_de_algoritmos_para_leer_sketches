@@ -3,15 +3,15 @@
 """
 run_experiments.py -- Orquestador de la Tarea 1 2026.
 
-REQUISITOS
-    - traza.bin en el directorio actual (salida de pcap2bin).
-    - numpy, pandas, matplotlib.
+Requiere tener traza.bin (salida de pcap2bin) en el directorio actual.
+Si no, se puede generar con:
+    zcat 201812031400.pcap.gz | ./pcap2bin > traza.bin
 
-LO QUE HACE
-    1. Inyecta DDoS y Scan (si no existen traza_*.bin + gt_*.json).
-    2. Corre exact_hh y tarea1 para cada (ataque, sketch, w).
-    3. Genera figures/freq_*.png, figures/delta_*.png.
-    4. Escribe results/summary.csv con MRE, latencia y memoria.
+Hace todo el pipeline del enunciado:
+  - Inyecta DDoS y Scan (si no existen los .bin + .json)
+  - Corre exact_hh y tarea1 para cada (ataque, sketch, w)
+  - Genera figuras con zoom temporal + error relativo en log-Y
+  - Escribe results/summary.csv
 """
 
 import argparse
@@ -45,7 +45,6 @@ def ensure_dir(p):
 
 
 def generar_ataques():
-    """Inyecta DDoS y Scan si no existen los .bin y .json correspondientes."""
     if not (os.path.exists("traza_ddos.bin") and os.path.exists("gt_ddos.json")):
         run([sys.executable, "inject_attack.py", "ddos",
              "--base", "traza.bin", "--out", "traza_ddos.bin",
@@ -63,13 +62,11 @@ def generar_ataques():
 
 
 def correr_exact(traza, key, query, out):
-    """Ground truth con exact_hh."""
     run(["./exact_hh", traza, "--key", key, "-W", str(W), "--delta", str(DELTA),
          "--phi", str(PHI), "--query", query, "--out-query", out])
 
 
 def correr_tarea1(traza, key, sketch, w, query, out, mode="detect"):
-    """Estimacion con tarea1."""
     run(["./tarea1", traza, "--mode", mode, "--key", key,
          "--sketch", sketch, "-d", str(D), "-w", str(w),
          "-W", str(W), "--delta", str(DELTA), "--phi", str(PHI),
@@ -77,11 +74,8 @@ def correr_tarea1(traza, key, sketch, w, query, out, mode="detect"):
 
 
 def leer_exact(path):
-    """exact_hh --out-query usa: win,tau_us,t_rel_s,key,N,threshold,exact_f,exact_hh,exact_delta"""
     df = pd.read_csv(path)
-    df = df.rename(columns={"exact_f": "f_exact",
-                            "exact_hh": "hh_exact",
-                            "exact_delta": "df_exact"})
+    df = df.rename(columns={"exact_f": "f_exact"})
     return df
 
 
@@ -90,45 +84,97 @@ def leer_sketch(path):
 
 
 def figura_frecuencias(dd, ataque, gt, outpath):
-    """Una figura por ataque: exacta + 6 curvas (CMS/CS x 3 anchos)."""
-    plt.figure(figsize=(11, 5.5))
+    """
+    Dos paneles:
+      - Superior: zoom temporal [ini-60, fin+60], eje Y lineal con unidades.
+      - Inferior: error relativo |est-exact|/exact en log-Y, solo ventanas afectadas.
+    """
     base = dd["exact"]
     ini, fin = gt["ventana_ataque_rel_s"]
-    plt.axvspan(ini, fin, color="red", alpha=0.10, label="ataque")
-    plt.plot(base["t_rel_s"], base["f_exact"], "k-", lw=2.5, label="exacto")
+    t_lo, t_hi = ini - 60, fin + 60
 
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    ax1.axvspan(ini, fin, color="red", alpha=0.10, label="Rango de ataque inyectado")
+    ax1.plot(base["t_rel_s"], base["f_exact"], "k-", lw=2.5, label="Conteo exacto (Ground Truth)")
     colores = {256: "tab:blue", 1024: "tab:orange", 4096: "tab:green"}
     estilos = {"cms": "-", "cs": "--"}
+    
     for w in WS:
         for sk in ("cms", "cs"):
             d = dd["sketches"][(sk, w)]
-            plt.plot(d["t_rel_s"], d["est"], estilos[sk],
-                     color=colores[w], alpha=0.85, label=f"{sk.upper()} w={w}")
-    plt.xlabel("tiempo relativo (s)")
-    plt.ylabel("frecuencia de la clave")
-    plt.title(f"Ataque {ataque}: frecuencia exacta vs estimada")
-    plt.legend(ncol=2, fontsize=8)
-    plt.grid(alpha=0.3)
+            nombre_sk = f"Count-Min (w={w})" if sk == "cms" else f"Count-Sketch (w={w})"
+            ax1.plot(d["t_rel_s"], d["est"], estilos[sk],
+                     color=colores[w], alpha=0.85, label=nombre_sk)
+                     
+    ax1.set_ylabel(f"Frecuencia acumulada $f(x)$\n(paquetes por ventana de {int(W)} s)")
+    ax1.set_title(f"Ataque {ataque.upper()}: Frecuencia exacta vs. estimada por Sketch")
+    ax1.legend(ncol=2, fontsize=8)
+    ax1.grid(alpha=0.3)
+    ax1.set_xlim(t_lo, t_hi)
+
+    ax2.axvspan(ini, fin, color="red", alpha=0.10)
+    for w in WS:
+        for sk in ("cms", "cs"):
+            d = dd["sketches"][(sk, w)].copy()
+            m = (d["t_rel_s"] >= ini) & (d["t_rel_s"] <= fin + W) & (d["exact"] > 0)
+            err = (d.loc[m, "est"] - d.loc[m, "exact"]).abs() / d.loc[m, "exact"]
+            err = err.clip(lower=1e-4)
+            nombre_sk = f"Count-Min (w={w})" if sk == "cms" else f"Count-Sketch (w={w})"
+            ax2.plot(d.loc[m, "t_rel_s"], err, estilos[sk] + "o",
+                     color=colores[w], ms=4, alpha=0.8, label=nombre_sk)
+                     
+    ax2.set_yscale("log")
+    ax2.set_xlabel("Tiempo transcurrido desde el inicio de la traza (segundos)")
+    ax2.set_ylabel("Error relativo de frecuencia\n$|\\hat{f} - f| / f$")
+    ax2.set_title("Error relativo en ventanas de tiempo afectadas")
+    ax2.legend(ncol=2, fontsize=8)
+    ax2.grid(alpha=0.3, which="both")
+    ax2.set_xlim(t_lo, t_hi)
+
     plt.tight_layout()
     plt.savefig(outpath, dpi=140)
     plt.close()
 
 
 def figura_delta(dd, ataque, gt, outpath):
-    """Delta f exacto vs CS vs CMS-mediana (una sola w para no saturar)."""
-    plt.figure(figsize=(11, 5.5))
+    """
+    Dos paneles:
+      - Superior: Delta f exacto, CS y CMS-mediana, symlog en Y.
+      - Inferior: error absoluto |Delta est - Delta exacto| en log-Y.
+    """
     base = dd["delta"]
     ini, fin = gt["ventana_ataque_rel_s"]
-    plt.axvspan(ini, fin, color="red", alpha=0.10, label="ataque")
-    plt.axhline(0, color="gray", lw=0.8)
-    plt.plot(base["t_rel_s"], base["df_exact"], "k-", lw=2.5, label="Δf exacto")
-    plt.plot(base["t_rel_s"], base["df_cs"], "b--", lw=1.5, label="Δf CS")
-    plt.plot(base["t_rel_s"], base["df_cmsmed"], "r:", lw=1.5, label="Δf CMS-mediana")
-    plt.xlabel("tiempo relativo (s)")
-    plt.ylabel("Δf de la clave")
-    plt.title(f"Ataque {ataque}: cambio de frecuencia")
-    plt.legend()
-    plt.grid(alpha=0.3)
+    t_lo, t_hi = ini - 60, fin + 60
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    ax1.axvspan(ini, fin, color="red", alpha=0.10, label="Rango de ataque inyectado")
+    ax1.axhline(0, color="gray", lw=0.8)
+    ax1.plot(base["t_rel_s"], base["df_exact"], "k-", lw=2.5, label="$\\Delta f$ Exacto")
+    ax1.plot(base["t_rel_s"], base["df_cs"], "b--", lw=1.5, label="$\\Delta f$ Count-Sketch")
+    ax1.plot(base["t_rel_s"], base["df_cmsmed"], "r:", lw=1.5, label="$\\Delta f$ Count-Min (Mediana)")
+    ax1.set_yscale("symlog", linthresh=1)
+    ax1.set_ylabel("Variación de frecuencia $\\Delta f = f_j - f_{j-1}$\n(paquetes / ventana)")
+    ax1.set_title(f"Ataque {ataque.upper()}: Variación de frecuencia entre ventanas consecutivas")
+    ax1.legend()
+    ax1.grid(alpha=0.3, which="both")
+    ax1.set_xlim(t_lo, t_hi)
+
+    ax2.axvspan(ini, fin, color="red", alpha=0.10)
+    m = (base["t_rel_s"] >= t_lo) & (base["t_rel_s"] <= t_hi)
+    err_cs  = (base.loc[m, "df_cs"]    - base.loc[m, "df_exact"]).abs().clip(lower=1e-1)
+    err_cms = (base.loc[m, "df_cmsmed"] - base.loc[m, "df_exact"]).abs().clip(lower=1e-1)
+    ax2.plot(base.loc[m, "t_rel_s"], err_cs,  "b--o", ms=4, label="Error Count-Sketch ($|\\Delta \\hat{f}_{CS} - \\Delta f|$)")
+    ax2.plot(base.loc[m, "t_rel_s"], err_cms, "r:o",  ms=4, label="Error Count-Min ($|\\Delta \\hat{f}_{CMS} - \\Delta f|$)")
+    ax2.set_yscale("log")
+    ax2.set_xlabel("Tiempo transcurrido desde el inicio de la traza (segundos)")
+    ax2.set_ylabel("Error absoluto de $\\Delta f$\n$|\\Delta \\hat{f} - \\Delta f|$ (paquetes)")
+    ax2.set_title("Error absoluto en la estimación del cambio de frecuencia")
+    ax2.legend()
+    ax2.grid(alpha=0.3, which="both")
+    ax2.set_xlim(t_lo, t_hi)
+
     plt.tight_layout()
     plt.savefig(outpath, dpi=140)
     plt.close()
@@ -189,15 +235,15 @@ def main():
                 lat_ex = primera_hh("hh_exact")
                 lat_sk = primera_hh("hh_sketch")
 
+                m_ring = 7
                 resultados.append({
                     "ataque": ataque, "sketch": sk, "w": w, "d": D,
                     "mre": mre,
                     "latencia_exacta_s": lat_ex,
                     "latencia_sketch_s": lat_sk,
-                    "memoria_KB": D * w * 8 // 1024,
+                    "memoria_KB": m_ring * D * w * 8 // 1024,
                 })
 
-        # --- Delta f (solo una w para la figura) ---
         out_delta = f"out/delta_{ataque}.csv"
         if not args.only_plots:
             correr_tarea1(traza, key, "cs", 1024, query, out_delta, mode="delta")
