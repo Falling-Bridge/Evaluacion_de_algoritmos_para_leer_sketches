@@ -322,9 +322,64 @@ print(
 )
 PY
 ```
-## 7. Preguntas obligatorias del informe
 
-### 7.1. ¿Por qué la linealidad permite mantener la ventana con costo independiente de la cantidad de paquetes que permanecen en ella?
+---
+
+## 7. Análisis e interpretación de gráficos (`figures/`)
+
+Esta sección describe cómo se procesan las mediciones en `run_experiments.py`, qué representan exactamente y cómo se interpretan los resultados visuales generados en la carpeta `figures/`.
+
+### 7.1. Gráficos de Frecuencia Absoluta (`freq_ddos.png` y `freq_scan.png`)
+
+#### Cómo se generan
+
+El script `run_experiments.py` ejecuta `./tarea1` en modo `--mode detect` para una clave de interés (`dst` para la víctima de DDoS; `src` para el atacante Scan) a través de todas las subventanas temporales $\tau_j$. Reúne las estimaciones calculadas por Count-Min Sketch (CMS) y CountSketch (CS) configurados en variaciones de ancho $w \in \{256, 1024, 4096\}$, alineándolas en un DataFrame con la serie temporal del valor exacto (`exact`). Utilizando Matplotlib, genera un gráfico principal compuesto por 6 curvas de estimación junto con el valor exacto, más un panel con un "zoom" ampliado sobre la región del ataque (alrededor de $t \in [300, 390]$ s).
+
+#### Qué miden
+
+Miden el conteo absoluto de paquetes acumulados dentro de la ventana deslizante activa $W$ (de 60 segundos) que coinciden con la clave consultada en cada instante $\tau_j$.
+
+#### Cómo interpretarlas
+
+* **Alineación con el Ground Truth:** Una aproximación visualmente superpuesta a la curva del valor exacto indica alta fidelidad del sketch.
+* **Sesgo de sobreestimación en CMS:** En anchos pequeños (p. ej., $w = 256$), las curvas de CMS se posicionan sistemáticamente por encima del valor real debido a las colisiones acumulativas que suma la función del mínimo.
+* **Comportamiento ruidoso e insesgado en CS:** Las curvas de CountSketch con anchos reducidos fluctúan alrededor del valor exacto (tanto hacia arriba como hacia abajo) debido a la cancelación estadística que ofrecen las funciones de signo ($\pm 1$). A medida que $w$ se incrementa a 4096, la varianza disminuye y la curva de CS converge hacia el valor exacto.
+* **Perfil temporal del ataque:** El tramo plano o bajo representa la actividad normal de fondo. La rampa ascendente de 60 segundos representa la entrada progresiva del ataque en la ventana deslizante, la cual se estabiliza durante la duración de la inyección y desciende al expirar los paquetes del anillo.
+
+<img width="1680" height="1120" alt="freq_scan" src="https://github.com/user-attachments/assets/9616a985-e0a8-4b9f-ae36-674de14ba26a" />
+<img width="1680" height="1120" alt="freq_ddos" src="https://github.com/user-attachments/assets/d5737cfb-6025-4e00-bf01-d838388a9cbc" />
+
+
+### 7.2. Gráficos de Variación de Frecuencia (`delta_ddos.png` y `delta_scan.png`)
+
+#### Cómo se generan
+
+Se obtienen ejecutando `./tarea1` bajo `--mode delta` para monitorear el flujo de la clave evaluada a lo largo del tiempo. El script calcula la diferencia temporal de frecuencia $\Delta f_j(x) = f_j(x) - f_{j-1}(x)$ para el valor exacto, para CountSketch ($\Delta cf_j^{CS}$) y para Count-Min Sketch modificado con mediana ($\Delta cf_j^{CMS-med}$). La figura consta de dos paneles verticales:
+
+* **Panel superior:** Representación temporal directa de la variación de frecuencia ($\Delta f$).
+* **Panel inferior:** Error absoluto de estimación $\vert \Delta cf - \Delta f_{exact} \vert$ registrado por cada método en cada paso $\tau_j$.
+
+#### Qué miden
+
+Miden la tasa neta de cambio del tráfico de una clave entre dos evaluaciones consecutivas $(\tau_{j-1}, \tau_j)$. Refleja la aceleración o desaceleración de la llegada de paquetes asociados a una IP.
+
+#### Cómo interpretarlas
+
+* **Firma de Entrada (Pico Positivo):** Un pico positivo pronunciado en $\Delta f$ identifica el instante exacto en que el ataque comienza a impactar la ventana deslizante (incremento brusco de la densidad de paquetes por subventana).
+* **Firma de Salida (Pico Negativo):** Al finalizar la inyección del ataque y pasar el tiempo equivalente al tamaño de la ventana activa ($W = 60$ s), el tráfico del ataque expira del anillo. Esto produce un pico negativo simétrico que marca la salida del ataque de la ventana.
+* **Régimen Estacionario ($\Delta f \approx 0$):** Durante la meseta del ataque (cuando la ventana está completamente llena de tráfico malicioso) o durante periodos de tráfico normal de fondo, $\Delta f$ se mantiene cercano a 0, ya que la cantidad de paquetes entrantes iguala a la de los expirados.
+* **Comparación CS vs. CMS-mediana:**
+  * En el panel de errores, CountSketch muestra errores de estimación significativamente más bajos debido a la cancelación teórica de ruido en diferencias.
+  * CMS-mediana (heurística) puede presentar picos de error más acentuados durante las transiciones abruptas, evidenciando la falta de garantías formales al aplicar medianas sobre arreglos sin signo.
+<img width="1680" height="1120" alt="delta_scan" src="https://github.com/user-attachments/assets/16863b54-d6f6-4f61-b646-377113ca6d83" />
+<img width="1680" height="1120" alt="delta_ddos" src="https://github.com/user-attachments/assets/57b75dc9-10a6-4d85-a518-fd29d682ce0a" />
+
+
+---
+
+## 8. Preguntas obligatorias del informe
+
+### 8.1. ¿Por qué la linealidad permite mantener la ventana con costo independiente de la cantidad de paquetes que permanecen en ella?
 
 La linealidad permite representar la ventana completa como la suma de sus `m` subventanas. Al avanzar una subventana, no es necesario recorrer nuevamente todos los paquetes de la ventana: basta con restar la subventana que expira y sumar la nueva:
 
@@ -334,13 +389,13 @@ A_{j+1} = A_j - S_{j-m+1} + S_{j+1}
 
 Por lo tanto, en cada rotación solo se actualizan los contadores asociados a dos subventanas. Para un sketch de `d` filas y ancho `w`, esto requiere `2 * d * w` actualizaciones, dando una complejidad de `O(d * w)`, independiente de la cantidad de paquetes contenidos en la ventana.
 
-### 7.2. ¿Qué diferencias observan entre el error de CMS y CS al reducir `w`?
+### 8.2. ¿Qué diferencias observan entre el error de CMS y CS al reducir `w`?
 
 Al reducir `w`, aumenta la probabilidad de colisiones entre claves. En CMS, estas colisiones solo pueden aumentar las estimaciones, por lo que el error tiende a manifestarse como una mayor sobreestimación.
 
 En CS, las funciones de signo permiten que las contribuciones de las colisiones se cancelen en esperanza. Por ello, al reducir `w` el estimador sigue siendo insesgado, pero aumenta su varianza y, por tanto, puede presentar errores de mayor magnitud y variaciones no monótonas.
 
-### 7.3. ¿Cuál de los dos ataques se detecta con mayor claridad y por qué la definición de la clave es distinta para DDoS y Scan?
+### 8.3. ¿Cuál de los dos ataques se detecta con mayor claridad y por qué la definición de la clave es distinta para DDoS y Scan?
 
 La claridad de la detección depende de cómo se agrupa el tráfico mediante la clave. El ataque DDoS concentra el tráfico hacia una misma víctima, por lo que la clave `dst` permite agrupar las múltiples fuentes bajo una misma dirección de destino.
 
@@ -348,16 +403,16 @@ En cambio, el ataque Scan se caracteriza por un emisor que genera tráfico hacia
 
 Así, cada ataque se analiza con la clave que concentra de mejor forma el comportamiento que se busca detectar: `dst` para DDoS y `src` para Scan.
 
-### 7.4. ¿Qué información adicional entrega `Δf_j(x) = f_j(x) - f_{j-1}(x)` respecto de observar solo la frecuencia de la ventana actual?
+### 8.4. ¿Qué información adicional entrega `Δf_j(x) = f_j(x) - f_{j-1}(x)` respecto de observar solo la frecuencia de la ventana actual?
 
 La frecuencia `f_j(x)` indica cuánto tráfico de la clave `x` existe en la ventana actual, pero no muestra directamente cómo cambió respecto de la ventana anterior.
 
 En cambio, `Δf_j(x)` permite identificar esos cambios: un valor positivo indica un aumento de frecuencia, mientras que un valor negativo indica una disminución. Esto permite identificar con mayor claridad la entrada y salida de un ataque, que se manifiestan respectivamente como un aumento y una disminución abruptos de la frecuencia.
 
-### 7.5. Compare `Δcf^{CS}_j(x)` y `Δcf^{CMS-med}_j(x)`. ¿Por qué CountSketch puede utilizar su estimador habitual, mientras que en CMS se reemplaza el mínimo por una mediana y se pierden las garantías estándar?
+### 8.5. Compare `Δcf^{CS}_j(x)` y `Δcf^{CMS-med}_j(x)`. ¿Por qué CountSketch puede utilizar su estimador habitual, mientras que en CMS se reemplaza el mínimo por una mediana y se pierden las garantías estándar?
 
 CountSketch puede aplicar directamente su estimador habitual a la diferencia entre subventanas porque sus contadores utilizan signos `+1` y `-1`. Al restar subventanas, estas contribuciones conservan la estructura necesaria para que el estimador basado en la mediana siga siendo aplicable a `Δf`.
 
 En CMS, el estimador habitual utiliza el mínimo entre las filas y depende de que las frecuencias sean no negativas. Al calcular diferencias entre subventanas, los valores pueden ser negativos, por lo que el mínimo deja de ser un estimador adecuado. Por ello se utiliza una mediana de las filas (`CMS-mediana`) para estimar la diferencia.
 
-Sin embargo, esta modificación no conserva las garantías estándar de Count-Min Sketch, ya que dichas garantías dependen de las propiedades del estimador basado en el mínimo y de la no negatividad de las frecuencias.
+Sin embargo, esta modificación no conserva las garantías estándar de Count-Min Sketch, ya que dichas garantías dependen de las propiedades del estimador basado en el mínimo y de la no negatividad de las frecuencias.<img width="1680" height="1120" alt="delta_ddos" src="https://github.com/user-attachments/assets/48b01a09-95ff-4753-89ad-85fd3bab4104" />
